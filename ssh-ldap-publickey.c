@@ -18,6 +18,11 @@
 #include <ldap.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
 
 /*
  * The LDAP filter used to find an entry which is a POSIX account with the
@@ -34,6 +39,18 @@
  * The name of the attribute containing an SSH public key.
  */
 #define LPK_ATTRIBUTE "sshPublicKey"
+
+/*
+ * required for ldap_sasl_interactive_bind_s()
+ */
+static int lpk_interact(
+        LDAP *ldap __attribute__((unused)),
+        unsigned flags __attribute__((unused)),
+        void *def __attribute__((unused)),
+        void *inter __attribute__((unused)))
+{
+        return LDAP_SUCCESS;
+}
 
 /*
  * Escape a string used in an LDAP filter. Returns 0 upon failure or a pointer
@@ -68,6 +85,14 @@ int main(int argc, char **argv)
     return 1;
   }
 
+  struct passwd *pwd;
+  if ((pwd = getpwuid(getuid())) != NULL) {
+    if (strlen(pwd->pw_dir) > 0 && chdir(pwd->pw_dir) != 0) {
+      fprintf(stderr, "chdir(%s): %s (required to reference $HOME/ldaprc)\n", pwd->pw_dir, strerror(errno));
+      return 1;
+    }
+  }
+
   /* Escape UID and create the LDAP filter. */
   char *uid = lpk_escape(argv[1]);
   if (!uid)
@@ -85,15 +110,28 @@ int main(int argc, char **argv)
   }
 
   /* Create the LDAP struct and search for entries matching the filter. */
-  LDAP *ldap;
+  LDAP *ldap = NULL;
+  LDAPControl	**sctrlsp = NULL;
+
   int err;
-  if ((err = ldap_create(&ldap)) != LDAP_SUCCESS)
+  if ((err = ldap_initialize(&ldap, NULL)) != LDAP_SUCCESS)
   {
-    fprintf(stderr, "ldap_create: %s\n", ldap_err2string(err));
+    fprintf(stderr, "ldap_initialize: %s\n", ldap_err2string(err));
     ret = 1;
     goto free_filter;
   }
 
+  int i = LDAP_VERSION3;
+  ldap_set_option(ldap, LDAP_OPT_PROTOCOL_VERSION, &i);
+
+  /* bind...  this is very simple bind, it relies on credentials from ldarc */
+  if (err = ldap_sasl_interactive_bind_s( ldap, NULL, NULL, NULL, NULL, LDAP_SASL_QUIET, lpk_interact, NULL ) != LDAP_SUCCESS) {
+    fprintf(stderr,  "ldap_sasl_interactive_bind_s: %s\n", ldap_err2string(err));
+    ret = 1;
+    goto free_filter;
+  }
+
+  /* Create the LDAP struct and search for entries matching the filter. */
   char *attributes[] = { LPK_ATTRIBUTE, 0 };
   LDAPMessage *result;
   if ((err = ldap_search_ext_s(ldap, 0, LDAP_SCOPE_SUBTREE, filter,
