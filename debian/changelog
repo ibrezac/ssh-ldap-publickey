@@ -1,3 +1,10 @@
+ssh-ldap-publickey (1.0.2) unstable; urgency=low
+
+  * chdir into home directory, when available, of the user that owns the process (required to support user level ldap options)
+  * Implement ldap sasl bind to appropriately authenticate to the ldap server
+
+ -- Igor Brezac <igor@yposs.net>  Wed, 31 Dec 2014 13:16:13 -0500
+
 ssh-ldap-publickey (1.0.1) unstable; urgency=low
 
   * Update README.markdown.
